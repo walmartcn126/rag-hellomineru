@@ -156,6 +156,14 @@ async def job_result(
     content_list = storage.read_json(output_dir / "content_list.json", []) or []
     meta = storage.read_json(output_dir / "meta.json", {}) or job.get("meta") or {}
 
+    # meta 以 DB 版本为准（finalize_job 更新过，可能含 artifacts/pages 等增强字段）；
+    # 若 DB 中没有 meta_json 或为空，再回退到磁盘 meta.json。
+    db_meta = job.get("meta") or {}
+    if db_meta:
+        # 合并：磁盘 meta 先读（含 engine/duration/stats），DB meta 覆盖（含 artifacts/pages）
+        merged_meta = {**meta, **db_meta}
+        meta = merged_meta
+
     pages = []
     for page in meta.get("pages") or []:
         image = page.get("image")
@@ -165,7 +173,11 @@ async def job_result(
                 "url": f"/api/jobs/{job_id}/files/output/{quote(image)}" if image else None,
             }
         )
-    artifacts = meta.get("artifacts") or storage.list_artifacts(settings, job_id)
+    # artifacts 永远以磁盘扫描结果为准 — 磁盘才是真正的数据源；
+    # 磁盘为空时再回退到 meta 里记录的（如果有的话），给调用方返回至少一个非空数组。
+    artifacts = storage.list_artifacts(settings, job_id)
+    if not artifacts:
+        artifacts = meta.get("artifacts") or []
     annotation = await repository.get_annotation(db, job_id, annotator)
     items = await repository.list_annotation_items(db, job_id)
 
