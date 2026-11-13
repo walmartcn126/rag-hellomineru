@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HelloMinerU · 解析工作台</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" />
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">HM</span>
+    <div>
+      <h1>HelloMinerU</h1>
+      <p>文档解析验证工作台</p>
+    </div>
+  </div>
+  <nav class="tabs" id="main-nav">
+    <button class="tab active" data-view="workbench">解析工作台</button>
+    <button class="tab" data-view="evaluation">评测看板</button>
+    <button class="tab" data-view="workers">Worker 节点</button>
+  </nav>
+  <div class="health" id="health-pill" title="服务状态">检测中…</div>
+</header>
+
+<main>
+  <!-- ============================================================ 工作台 -->
+  <section class="view active" id="view-workbench">
+    <aside class="panel upload-panel">
+      <h2>提交解析任务</h2>
+
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="file-input" hidden
+               accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif,.jp2,.docx,.pptx,.xlsx,.xlsm,.csv" />
+        <span class="dz-icon">⇪</span>
+        <span class="dz-title">点击选择或拖拽文件到此处</span>
+        <span class="dz-hint">PDF / 图片 / DOCX / PPTX / XLSX / CSV，最大 100MB</span>
+      </label>
+
+      <div class="file-info" id="file-info" hidden>
+        <div class="file-row">
+          <strong id="file-name"></strong>
+          <span id="file-size" class="muted"></span>
+        </div>
+        <div id="detect-box" class="detect-box"></div>
+      </div>
+
+      <div class="field">
+        <label for="engine-select">解析引擎</label>
+        <select id="engine-select"></select>
+        <small id="engine-hint" class="muted"></small>
+      </div>
+
+      <details class="options" id="options-details">
+        <summary>解析参数（MinerU / PyMuPDF）</summary>
+        <div id="option-groups"></div>
+      </details>
+
+      <button class="primary" id="submit-btn" disabled>开始解析</button>
+      <p class="muted tiny">解析在主节点内置 Worker 中执行；可通过多节点部署分流。</p>
+    </aside>
+
+    <div class="workbench-main">
+      <div class="panel jobs-panel">
+        <div class="panel-head">
+          <h2>任务队列</h2>
+          <div class="head-actions">
+            <span class="muted tiny" id="jobs-summary"></span>
+            <button class="ghost small" id="refresh-jobs">刷新</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="jobs-table">
+            <thead>
+              <tr><th>任务</th><th>文件</th><th>引擎</th><th>状态</th><th>评分</th><th>耗时</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p class="empty" id="jobs-empty">暂无任务，先上传一个文档吧。</p>
+        </div>
+      </div>
+
+      <div class="panel result-panel" id="result-panel" hidden>
+        <div class="panel-head result-head">
+          <div>
+            <h2 id="result-title">解析结果</h2>
+            <p class="muted tiny" id="result-subtitle"></p>
+          </div>
+          <div class="head-actions">
+            <button class="ghost small" id="cancel-job">取消</button>
+            <button class="ghost small danger" id="delete-job">删除</button>
+          </div>
+        </div>
+
+        <div class="subtabs" id="result-tabs">
+          <button class="subtab active" data-tab="preview">Markdown 预览</button>
+          <button class="subtab" data-tab="pages">版式 / 页面</button>
+          <button class="subtab" data-tab="blocks">内容块</button>
+          <button class="subtab" data-tab="annotation">人工标注</button>
+          <button class="subtab" data-tab="log">运行日志</button>
+          <button class="subtab" data-tab="files">产物文件</button>
+        </div>
+
+        <div class="subview active" id="tab-preview">
+          <div class="preview-actions">
+            <button class="ghost small" id="toggle-raw">查看原始 Markdown</button>
+            <span class="muted tiny" id="markdown-stats"></span>
+          </div>
+          <article class="markdown-body" id="markdown-rendered"></article>
+          <pre class="raw-md" id="markdown-raw" hidden></pre>
+        </div>
+
+        <div class="subview" id="tab-pages">
+          <div class="pages-grid" id="pages-grid"></div>
+          <p class="empty" id="pages-empty">当前结果没有页面缩略图。</p>
+        </div>
+
+        <div class="subview" id="tab-blocks">
+          <div class="blocks-list" id="blocks-list"></div>
+          <p class="empty" id="blocks-empty">当前结果没有 content_list 数据。</p>
+        </div>
+
+        <div class="subview" id="tab-annotation">
+          <div class="annotation-layout">
+            <div class="score-card">
+              <h3>整体评分（1–5 分）</h3>
+              <div class="field inline">
+                <label for="annotator">标注人</label>
+                <input id="annotator" placeholder="你的名字" maxlength="64" />
+              </div>
+              <div id="score-fields"></div>
+              <div class="field">
+                <label for="annotation-comment">评语</label>
+                <textarea id="annotation-comment" rows="3" placeholder="记录问题、观察或结论"></textarea>
+              </div>
+              <div class="field inline">
+                <label for="annotation-status">状态</label>
+                <select id="annotation-status">
+                  <option value="draft">草稿</option>
+                  <option value="submitted">已提交</option>
+                </select>
+              </div>
+              <button class="primary" id="save-annotation">保存评分</button>
+              <p class="muted tiny" id="annotation-meta"></p>
+            </div>
+
+            <div class="item-card">
+              <h3>逐元素标注</h3>
+              <p class="muted tiny">在「内容块」标签中点击「标注」选择元素，或在此填写 block 引用。</p>
+              <div class="item-form">
+                <select id="item-label"></select>
+                <input id="item-block" placeholder="如 p0:b3（页码:块序号）" />
+                <input id="item-comment" placeholder="问题说明（可选）" />
+                <button class="ghost" id="add-item">添加标注</button>
+              </div>
+              <ul class="item-list" id="item-list"></ul>
+              <p class="empty" id="items-empty">暂无元素标注。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="subview" id="tab-log">
+          <div class="log-toolbar">
+            <span class="muted tiny" id="log-status"></span>
+            <label class="checkbox"><input type="checkbox" id="log-follow" checked /> 自动滚动</label>
+          </div>
+          <pre class="log-box" id="log-box"></pre>
+        </div>
+
+        <div class="subview" id="tab-files">
+          <div class="artifacts" id="artifacts"></div>
+          <p class="empty" id="artifacts-empty">暂无产物文件。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================== 评测 -->
+  <section class="view" id="view-evaluation">
+    <div class="stat-cards" id="eval-cards"></div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>评分记录</h2>
+        <div class="head-actions">
+          <select id="eval-engine-filter">
+            <option value="">全部引擎</option>
+          </select>
+          <input id="eval-annotator-filter" placeholder="标注人筛选" />
+          <button class="ghost small" id="refresh-annotations">刷新</button>
+          <a class="button ghost small" href="/api/export/annotations?format=csv">导出 CSV</a>
+          <a class="button ghost small" href="/api/export/annotations?format=json">导出 JSON</a>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="annotations-table">
+          <thead>
+            <tr><th>文件</th><th>引擎</th><th>标注人</th><th>文本</th><th>顺序</th><th>表格</th><th>公式</th><th>图片</th><th>总分</th><th>状态</th><th>时间</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <p class="empty" id="annotations-empty">暂无评分记录。</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>分组统计</h2>
+        <div class="head-actions">
+          <select id="stats-groupby">
+            <option value="engine,backend,method">按引擎 / backend / method</option>
+            <option value="engine">按引擎</option>
+            <option value="annotator">按标注人</option>
+            <option value="engine,runner">按引擎 / 执行方式</option>
+          </select>
+          <button class="ghost small" id="refresh-stats">刷新</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="stats-table">
+          <thead><tr><th>分组</th><th>样本</th><th>总分</th><th>文本</th><th>顺序</th><th>表格</th><th>公式</th><th>图片</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="empty" id="stats-empty">暂无统计。先完成任务并评分。</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>同文档多解析器对比</h2>
+        <div class="head-actions">
+          <select id="compare-document"></select>
+          <button class="ghost small" id="refresh-documents">刷新文档</button>
+        </div>
+      </div>
+      <div class="compare-picker" id="compare-picker"></div>
+      <div class="compare-grid">
+        <div>
+          <h4 id="compare-left-title" class="muted">选择左侧运行</h4>
+          <article class="markdown-body compare-body" id="compare-left"></article>
+        </div>
+        <div>
+          <h4 id="compare-right-title" class="muted">选择右侧运行</h4>
+          <article class="markdown-body compare-body" id="compare-right"></article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================== 节点 -->
+  <section class="view" id="view-workers">
+    <div class="stat-cards" id="worker-cards"></div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Worker 节点</h2>
+        <div class="head-actions">
+          <button class="ghost small" id="refresh-workers">刷新</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="workers-table">
+          <thead>
+            <tr><th>节点</th><th>主机</th><th>状态</th><th>引擎</th><th>backends</th><th>当前任务</th><th>完成 / 失败</th><th>最后心跳</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <p class="empty" id="workers-empty">暂无节点。</p>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>分布式部署提示</h2>
+      <pre class="code-hint" id="deploy-hint"></pre>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
